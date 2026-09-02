@@ -1,0 +1,12 @@
+# Build settings that make the published native libraries portable. These live here rather
+# than in CI so that a local `cargo build` produces the same artifact as a release.
+
+[env]
+# The oldest macOS the arm64 artifact must load on. Ignored by non-Apple linkers.
+MACOSX_DEPLOYMENT_TARGET = "11.0"
+
+[target.'cfg(all(windows, target_env = "msvc"))']
+# Without this the DLL imports VCRUNTIME140.dll, so loading it fails on any Windows host
+# without the Visual C++ Redistributable installed (Server Core and Nano Server images, for
+# example). Statically linking the CRT leaves KERNEL32 as the only import.
+rustflags = ["-Ctarget-feature=+crt-static"]

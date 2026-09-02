@@ -1,0 +1,7 @@
+target/
+native/target/
+dist/
+.m2/
+.idea/
+*.iml
+*.log

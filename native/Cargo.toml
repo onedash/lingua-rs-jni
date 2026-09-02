@@ -1,0 +1,22 @@
+[package]
+name = "lingua-rs-jni-native"
+version = "1.8.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "lingua_rs_jni"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21.1"
+# Pinned exactly: the Java `Language` enum mirrors this release's variants one for one.
+lingua = "=1.8.0"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+# `catch_unwind` in lib.rs is the only thing standing between a lingua panic and undefined
+# behaviour at the `extern "system"` boundary, so unwinding must stay enabled.
+panic = "unwind"

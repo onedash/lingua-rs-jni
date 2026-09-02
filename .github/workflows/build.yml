@@ -1,0 +1,196 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  # Never cancel a tag build half-way through publishing.
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  # The released .so must load on any host with at least this glibc. Raising it silently would
+  # break older distributions, so the build asserts it instead.
+  MAX_GLIBC: '2.34'
+  MACOS_MIN_VERSION: '11.0'
+
+jobs:
+  native:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows-x86_64
+            library: lingua_rs_jni.dll
+          - runner: ubuntu-latest
+            platform: linux-x86_64
+            library: liblingua_rs_jni.so
+          # macos-latest is always Apple silicon; the architecture is asserted below anyway.
+          - runner: macos-latest
+            platform: macos-aarch64
+            library: liblingua_rs_jni.dylib
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Lint the native crate
+        working-directory: native
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test the native crate
+        working-directory: native
+        run: cargo test --release --locked
+
+      - name: Build the native library and run the Java tests
+        run: mvn -B -ntp clean verify
+
+      - name: Check that the native library is portable
+        shell: bash
+        env:
+          LIBRARY: target/generated-resources/native/${{ matrix.platform }}/${{ matrix.library }}
+        run: |
+          set -euo pipefail
+          ls -l "$LIBRARY"
+          case "${{ matrix.platform }}" in
+            linux-x86_64)
+              required=$(objdump -T "$LIBRARY" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' \
+                | sed 's/GLIBC_//' | sort -V -u)
+              echo "Required glibc symbol versions:"; echo "$required" | sed 's/^/  /'
+              highest=$(echo "$required" | tail -1)
+              if [ "$(printf '%s\n%s\n' "$highest" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+                echo "::error::Needs glibc $highest but the supported floor is $MAX_GLIBC."
+                echo "::error::Build the Linux library in an older container, or raise MAX_GLIBC and say so in the README."
+                exit 1
+              fi
+              file "$LIBRARY" | grep -q 'x86-64' \
+                || { echo "::error::Not an x86-64 library"; exit 1; }
+              echo "OK: x86-64, highest requirement is glibc $highest"
+              ;;
+            macos-aarch64)
+              otool -l "$LIBRARY" | grep -A4 LC_BUILD_VERSION
+              otool -l "$LIBRARY" | grep -q "minos $MACOS_MIN_VERSION" \
+                || { echo "::error::Deployment target is not $MACOS_MIN_VERSION"; exit 1; }
+              [ "$(lipo -archs "$LIBRARY")" = arm64 ] \
+                || { echo "::error::Not an arm64 library"; exit 1; }
+              echo "OK: arm64, minimum macOS $MACOS_MIN_VERSION"
+              ;;
+            windows-x86_64)
+              # native/.cargo/config.toml links the CRT statically; without it the DLL needs the
+              # Visual C++ Redistributable, which minimal Windows images do not ship.
+              if grep -aq 'VCRUNTIME140\|api-ms-win-crt' "$LIBRARY"; then
+                echo "::error::The DLL imports the Visual C++ runtime; check native/.cargo/config.toml."
+                exit 1
+              fi
+              echo "OK: no Visual C++ Redistributable dependency"
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: target/generated-resources/native
+          retention-days: 1
+          if-no-files-found: error
+
+  package:
+    name: package
+    needs: native
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          # Writes a settings.xml whose `github` server reads GITHUB_ACTOR / GITHUB_TOKEN.
+          server-id: github
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          merge-multiple: true
+          path: target/generated-resources/native
+
+      - name: Show the collected native libraries
+        run: find target/generated-resources/native -type f -printf '%12s  %p\n' | sort -k2
+
+      - name: Set the release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: mvn -B -ntp versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DgenerateBackupPoms=false
+
+      # Runs the Java tests once more against the Linux library, then builds the universal JAR,
+      # the three per-platform JARs and the sources/javadoc JARs. On a tag it also publishes
+      # them to GitHub Packages.
+      - name: Package
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            mvn -B -ntp -Pdist deploy
+          else
+            mvn -B -ntp -Pdist package
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collect the release assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/lingua-rs-jni-*.jar dist/
+          (cd dist && sha256sum *.jar > SHA256SUMS)
+          ls -l dist
+
+      - name: Show what each JAR bundles
+        run: |
+          for jar in dist/*.jar; do
+            echo "== $(basename "$jar")"
+            unzip -l "$jar" | grep -E 'native/.*(dll|so|dylib)$' || echo '   (no native libraries)'
+          done
+
+      # Skipped on ordinary pushes: these JARs total roughly 800 MB.
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: jars
+          path: dist
+          retention-days: 1
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

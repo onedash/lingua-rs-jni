@@ -1,0 +1,343 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.onedash</groupId>
+    <artifactId>lingua-rs-jni</artifactId>
+    <version>1.8.0-1-SNAPSHOT</version>
+    <name>Lingua Rust JNI</name>
+    <description>Java 21 JNI bindings for lingua-rs</description>
+    <url>https://github.com/onedash/lingua-rs-jni</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+    <developers>
+        <developer>
+            <id>onedash</id>
+            <name>onedash</name>
+            <url>https://github.com/onedash</url>
+        </developer>
+    </developers>
+    <scm>
+        <connection>scm:git:https://github.com/onedash/lingua-rs-jni.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/onedash/lingua-rs-jni.git</developerConnection>
+        <url>https://github.com/onedash/lingua-rs-jni</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <distributionManagement>
+        <!-- GitHub Packages. Publishing needs a token with write:packages; consuming needs one
+             with read:packages, even though the repository itself is public. -->
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/onedash/lingua-rs-jni</url>
+        </repository>
+        <snapshotRepository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/onedash/lingua-rs-jni</url>
+        </snapshotRepository>
+    </distributionManagement>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>21</maven.compiler.release>
+        <!-- Fixed so the published JARs are byte-for-byte reproducible from a given tag. -->
+        <project.build.outputTimestamp>2024-01-01T00:00:00Z</project.build.outputTimestamp>
+
+        <junit.version>5.10.0</junit.version>
+        <assertj.version>3.26.3</assertj.version>
+
+        <!-- Set to true to package natives that were built elsewhere (see the dist profile). -->
+        <skipNativeBuild>false</skipNativeBuild>
+        <!-- Extra cargo arguments, appended verbatim to `cargo build`. Passing lingua's
+             no-default-features flag plus an explicit language feature list cuts the ~290 MB
+             library down to the languages you actually need; see the README for the exact
+             command line. -->
+        <native.cargo.args></native.cargo.args>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.build.directory}/generated-resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.basedir}</directory>
+                <targetPath>META-INF</targetPath>
+                <includes>
+                    <include>LICENSE</include>
+                    <include>THIRD_PARTY_NOTICES.md</include>
+                </includes>
+            </resource>
+        </resources>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <!-- Deliberately small: the language models must stay off the Java heap,
+                         and LanguageDetectorHardnessTest proves it. -->
+                    <argLine>-Xmx256m</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Automatic-Module-Name>io.github.onedash.linguarsjni</Automatic-Module-Name>
+                            <Implementation-Title>${project.name}</Implementation-Title>
+                            <Implementation-Version>${project.version}</Implementation-Version>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-install-plugin</artifactId>
+                <version>3.1.2</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <version>3.1.2</version>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>versions-maven-plugin</artifactId>
+                <version>2.18.0</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>build-native-library</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <skip>${skipNativeBuild}</skip>
+                            <target>
+                                <fail unless="native.resource.dir"
+                                      message="Supported build machines are Windows x86-64, Linux x86-64 and macOS ARM64. Use -DskipNativeBuild=true to package libraries built elsewhere."/>
+                                <exec executable="cargo" dir="${project.basedir}/native" failonerror="true">
+                                    <arg value="build"/>
+                                    <arg value="--release"/>
+                                    <arg value="--locked"/>
+                                    <arg line="${native.cargo.args}"/>
+                                </exec>
+                                <mkdir dir="${project.build.directory}/generated-resources/native/${native.resource.dir}"/>
+                                <copy file="${project.basedir}/native/target/release/${native.library.name}"
+                                      tofile="${project.build.directory}/generated-resources/native/${native.resource.dir}/${native.library.name}"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- NativeLibraryLoader reads these to verify its extraction cache
+                             without having to inflate the library out of the JAR first. -->
+                        <id>checksum-native-libraries</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <checksum algorithm="SHA-256" fileext=".sha256" forceoverwrite="true">
+                                    <fileset dir="${project.build.outputDirectory}" erroronmissingdir="false">
+                                        <include name="native/**/*.dll"/>
+                                        <include name="native/**/*.so"/>
+                                        <include name="native/**/*.dylib"/>
+                                    </fileset>
+                                </checksum>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>windows-x86-64</id>
+            <activation><os><family>Windows</family><arch>amd64</arch></os></activation>
+            <properties>
+                <native.resource.dir>windows-x86_64</native.resource.dir>
+                <native.library.name>lingua_rs_jni.dll</native.library.name>
+            </properties>
+        </profile>
+        <profile>
+            <id>linux-x86-64</id>
+            <activation><os><family>unix</family><name>Linux</name><arch>amd64</arch></os></activation>
+            <properties>
+                <native.resource.dir>linux-x86_64</native.resource.dir>
+                <native.library.name>liblingua_rs_jni.so</native.library.name>
+            </properties>
+        </profile>
+        <profile>
+            <id>macos-aarch64</id>
+            <activation><os><family>mac</family><arch>aarch64</arch></os></activation>
+            <properties>
+                <native.resource.dir>macos-aarch64</native.resource.dir>
+                <native.library.name>liblingua_rs_jni.dylib</native.library.name>
+            </properties>
+        </profile>
+
+        <profile>
+            <!-- Release packaging. Expects all three native libraries under
+                 target/generated-resources/native/<platform>/ and produces the universal JAR
+                 (no classifier) plus one JAR per platform, sources and javadoc. -->
+            <id>dist</id>
+            <properties>
+                <skipNativeBuild>true</skipNativeBuild>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>verify-native-libraries</id>
+                                <phase>prepare-package</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <macrodef name="require-native">
+                                            <attribute name="path"/>
+                                            <sequential>
+                                                <fail message="Missing native library @{path}">
+                                                    <condition>
+                                                        <not><available file="${project.build.outputDirectory}/@{path}"/></not>
+                                                    </condition>
+                                                </fail>
+                                                <fail message="Missing checksum @{path}.sha256">
+                                                    <condition>
+                                                        <not><available file="${project.build.outputDirectory}/@{path}.sha256"/></not>
+                                                    </condition>
+                                                </fail>
+                                            </sequential>
+                                        </macrodef>
+                                        <require-native path="native/windows-x86_64/lingua_rs_jni.dll"/>
+                                        <require-native path="native/linux-x86_64/liblingua_rs_jni.so"/>
+                                        <require-native path="native/macos-aarch64/liblingua_rs_jni.dylib"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-jar-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>windows-x86_64-jar</id>
+                                <phase>package</phase>
+                                <goals><goal>jar</goal></goals>
+                                <configuration>
+                                    <classifier>windows-x86_64</classifier>
+                                    <excludes>
+                                        <exclude>native/linux-x86_64/**</exclude>
+                                        <exclude>native/macos-aarch64/**</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>linux-x86_64-jar</id>
+                                <phase>package</phase>
+                                <goals><goal>jar</goal></goals>
+                                <configuration>
+                                    <classifier>linux-x86_64</classifier>
+                                    <excludes>
+                                        <exclude>native/windows-x86_64/**</exclude>
+                                        <exclude>native/macos-aarch64/**</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>macos-aarch64-jar</id>
+                                <phase>package</phase>
+                                <goals><goal>jar</goal></goals>
+                                <configuration>
+                                    <classifier>macos-aarch64</classifier>
+                                    <excludes>
+                                        <exclude>native/windows-x86_64/**</exclude>
+                                        <exclude>native/linux-x86_64/**</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <configuration>
+                            <!-- Without this the sources JAR would also ship every native
+                                 library, because they are declared as project resources. -->
+                            <excludeResources>true</excludeResources>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <phase>package</phase>
+                                <goals><goal>jar-no-fork</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.8.0</version>
+                        <configuration>
+                            <doclint>none</doclint>
+                            <quiet>true</quiet>
+                            <notimestamp>true</notimestamp>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadoc</id>
+                                <phase>package</phase>
+                                <goals><goal>jar</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

@@ -1,0 +1,9 @@
+.git
+.github
+.idea
+.m2
+dist
+target
+native/target
+*.iml
+*.log
