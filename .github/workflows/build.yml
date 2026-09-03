@@ -34,9 +34,9 @@ jobs:
             library: liblingua_rs_jni.dylib
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -90,7 +90,7 @@ jobs:
               ;;
           esac
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.platform }}
           path: target/generated-resources/native
@@ -101,14 +101,14 @@ jobs:
     name: linux-x86_64-musl
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Building and testing inside Alpine proves that the shared object loads in the same
       # musl-based JVM family used by BackendMono.
       - name: Build and test in Alpine
         run: docker build --target native-artifact --output type=local,dest=target/generated-resources .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: native-linux-x86_64-musl
           path: target/generated-resources/native
@@ -123,9 +123,9 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -133,7 +133,7 @@ jobs:
           # Writes a settings.xml whose `github` server reads GITHUB_ACTOR / GITHUB_TOKEN.
           server-id: github
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: native-*
           merge-multiple: true
@@ -188,7 +188,7 @@ jobs:
           done
 
       # Skipped on ordinary pushes because the JARs are large.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'
         with:
           name: jars
