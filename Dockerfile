@@ -25,8 +25,11 @@ RUN cd native \
     && cargo clippy --locked --all-targets -- -D warnings \
     && cargo test --release --locked
 RUN mvn -B -ntp clean verify
-RUN file target/generated-resources/native/linux-x86_64-musl/liblingua_rs_jni.so \
-    && scanelf --needed target/generated-resources/native/linux-x86_64-musl/liblingua_rs_jni.so
+RUN library=target/generated-resources/native/linux-x86_64-musl/liblingua_rs_jni.so \
+    && file "$library" \
+    && needed="$(scanelf --nobanner --format '%n' "$library")" \
+    && echo "Runtime dependencies: $needed" \
+    && [ "$needed" = libc.musl-x86_64.so.1 ]
 
 # Prove that the library loads in BackendMono's unchanged runtime image, without build-base.
 FROM eclipse-temurin:21-jre-alpine AS runtime-test

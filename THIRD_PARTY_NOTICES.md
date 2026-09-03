@@ -19,3 +19,8 @@ and the MIT License. This project uses it under the Apache License 2.0.
 The remaining crates reachable from those two are permissively licensed (Apache-2.0, MIT,
 Unicode-3.0 or BSD variants). Run `cargo tree` or `cargo license` in `native/` for the full
 list at a given lock revision.
+
+## GCC runtime library
+
+The Alpine native library statically links GCC's exception-handling runtime under the
+[GCC Runtime Library Exception](https://www.gnu.org/licenses/gcc-exception-3.1.html).

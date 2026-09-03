@@ -13,5 +13,7 @@ rustflags = ["-Ctarget-feature=+crt-static"]
 
 [target.x86_64-unknown-linux-musl]
 # A JNI library is loaded into the existing musl JVM process, so it must be a dynamically
-# loadable shared object rather than the musl target's default static-CRT output.
-rustflags = ["-Ctarget-feature=-crt-static"]
+# loadable shared object rather than the musl target's default static-CRT output. The native
+# search path satisfies Rust's -lgcc_s with the static GCC unwinder linker script, leaving musl
+# as the shared object's only runtime dependency.
+rustflags = ["-Ctarget-feature=-crt-static", "-Lnative=linker/musl"]

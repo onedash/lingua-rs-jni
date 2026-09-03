@@ -14,13 +14,16 @@ runtime.
 
 | Platform | Artifact classifier | Runtime requirement |
 | --- | --- | --- |
-| Alpine Linux x86-64 | `linux-x86_64-musl` | musl 1.2.5 and `libgcc` (`eclipse-temurin:21-jre-alpine`) |
+| Alpine Linux x86-64 | `linux-x86_64-musl` | musl (`eclipse-temurin:21-jre-alpine`) |
 | Windows x86-64 | `windows-x86_64` | Windows 10 / Server 2016 or newer. The CRT is linked statically, so no Visual C++ Redistributable is needed. |
 | macOS ARM64 | `macos-aarch64` | macOS 11 or newer |
 
 CI asserts each of those requirements on every build, so they cannot regress silently.
 Other targets (Linux with glibc, Linux ARM64 and macOS x86-64) are not published; see
 [Building from source](#building-from-source).
+
+The Alpine library dynamically uses the JVM process's musl libc. Its Rust dependencies,
+language models and GCC unwinder are embedded, so the runtime image does not need `libgcc`.
 
 ## Installing
 
