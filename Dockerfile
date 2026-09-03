@@ -6,10 +6,13 @@
 FROM maven:3.9.16-eclipse-temurin-21-alpine AS build
 
 RUN apk add --no-cache build-base file pax-utils \
+    && mkdir -p /opt/lingua-static-unwind \
+    && cp "$(cc -print-file-name=libgcc_eh.a)" /opt/lingua-static-unwind/libgcc_s.a \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
        | sh -s -- -y --profile minimal --component clippy --component rustfmt --no-modify-path
 
 ENV PATH="/root/.cargo/bin:${PATH}"
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Ctarget-feature=-crt-static -Lnative=/opt/lingua-static-unwind"
 WORKDIR /workspace
 
 # Resolve Maven dependencies before the sources land so editing code does not re-download
@@ -27,7 +30,7 @@ RUN cd native \
 RUN mvn -B -ntp clean verify
 RUN library=target/generated-resources/native/linux-x86_64-musl/liblingua_rs_jni.so \
     && file "$library" \
-    && needed="$(scanelf --nobanner --format '%n' "$library")" \
+    && needed="$(scanelf --needed --nobanner "$library" | awk '{print $2}')" \
     && echo "Runtime dependencies: $needed" \
     && [ "$needed" = libc.musl-x86_64.so.1 ]
 
