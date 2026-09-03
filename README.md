@@ -14,20 +14,20 @@ runtime.
 
 | Platform | Artifact classifier | Runtime requirement |
 | --- | --- | --- |
-| Linux x86-64 | `linux-x86_64` | glibc 2.34 or newer (Ubuntu 22.04+, Debian 12+, RHEL 9+, Amazon Linux 2023). Not musl/Alpine. |
+| Alpine Linux x86-64 | `linux-x86_64-musl` | musl 1.2.5 and `libgcc` (`eclipse-temurin:21-jre-alpine`) |
 | Windows x86-64 | `windows-x86_64` | Windows 10 / Server 2016 or newer. The CRT is linked statically, so no Visual C++ Redistributable is needed. |
 | macOS ARM64 | `macos-aarch64` | macOS 11 or newer |
 
 CI asserts each of those requirements on every build, so they cannot regress silently.
-Other targets (Linux ARM64, macOS x86-64, musl) are not published; see
+Other targets (Linux with glibc, Linux ARM64 and macOS x86-64) are not published; see
 [Building from source](#building-from-source).
 
 ## Installing
 
 Two artifacts exist for every release:
 
-* the **universal JAR** (no classifier) bundles all three native libraries — one dependency
-  that works everywhere, at roughly 490 MB;
+* the **universal JAR** (no classifier) bundles all three supported native libraries — one
+  dependency for Windows x86-64, Alpine Linux x86-64 and macOS ARM64, below 500 MB;
 * three **per-platform JARs** carry the same Java classes plus one native library, at
   roughly 165 MB each.
 
@@ -93,7 +93,7 @@ build host decide, and override it wherever the two differ:
 ```xml
 <properties>
   <!-- Used when no profile below matches, and by `mvn -Dlingua.classifier=...`. -->
-  <lingua.classifier>linux-x86_64</lingua.classifier>
+  <lingua.classifier>linux-x86_64-musl</lingua.classifier>
 </properties>
 
 <profiles>
@@ -110,13 +110,13 @@ build host decide, and override it wherever the two differ:
   <profile>
     <id>lingua-linux</id>
     <activation><os><family>unix</family><name>Linux</name><arch>amd64</arch></os></activation>
-    <properties><lingua.classifier>linux-x86_64</lingua.classifier></properties>
+    <properties><lingua.classifier>linux-x86_64-musl</lingua.classifier></properties>
   </profile>
 </profiles>
 ```
 
 > These profiles are evaluated on the **build** host. If you build your deployable JAR on
-> Windows and run it in a Linux container, pass `-Dlingua.classifier=linux-x86_64` to that
+> Windows and run it in an Alpine container, pass `-Dlingua.classifier=linux-x86_64-musl` to that
 > build, or use the universal JAR. Building inside the Docker image, which is the usual
 > setup, needs no override.
 
@@ -129,7 +129,7 @@ developer machine and every fresh CI runner, which is why GitHub Packages is pre
 
 ```bash
 VERSION=1.8.0-1
-JAR=lingua-rs-jni-${VERSION}-linux-x86_64.jar
+JAR=lingua-rs-jni-${VERSION}-linux-x86_64-musl.jar
 
 curl -fL -o "$JAR" \
   "https://github.com/onedash/lingua-rs-jni/releases/download/v${VERSION}/${JAR}"
@@ -139,7 +139,7 @@ mvn org.apache.maven.plugins:maven-install-plugin:3.1.2:install-file \
   -DgroupId=io.github.onedash \
   -DartifactId=lingua-rs-jni \
   -Dversion="$VERSION" \
-  -Dclassifier=linux-x86_64 \
+  -Dclassifier=linux-x86_64-musl \
   -Dpackaging=jar \
   -DgeneratePom=true
 ```
@@ -241,9 +241,8 @@ Everything below was measured with one shared detector across many threads.
 * **Sharing one detector across threads costs the same as one detector per thread** — the
   handle registry uses a read-write lock that is only held long enough to look the detector
   up, and detection itself runs lock-free. Build one detector and share it.
-* `computeLanguageConfidence(text, language)` is cheaper than
-  `computeLanguageConfidenceValues(text).get(language)`: it allocates no map and boxes
-  nothing.
+* If several confidence values are needed for the same text, call
+  `computeLanguageConfidenceValues(text)` once and reuse the returned map.
 
 Absolute throughput depends heavily on hardware, text length and language set; benchmark on
 your own hosts rather than trusting a number from someone else's laptop.
@@ -282,7 +281,7 @@ inside each deployment, or point every deployment at one `lingua.native.path`.
 ## Building from source
 
 Requirements: JDK 21, Maven 3.9+, a stable Rust toolchain, and a C toolchain for the linker
-(MSVC Build Tools on Windows, `build-essential` on Linux, Xcode Command Line Tools on macOS).
+(MSVC Build Tools on Windows, Alpine `build-base` on Linux, Xcode Command Line Tools on macOS).
 
 ```bash
 mvn clean verify      # builds the native library for this machine and runs all tests
@@ -292,7 +291,7 @@ cd native && cargo test --release --locked
 The result is `target/lingua-rs-jni-<version>.jar`, containing the Java classes and the
 native library for the current machine.
 
-To build the Linux artifact from Windows or macOS:
+To build the Alpine Linux artifact from any Docker host:
 
 ```bash
 docker build --target artifacts --output dist .
@@ -313,7 +312,7 @@ language names, listed in [lingua's `Cargo.toml`](https://github.com/pemistahl/l
 
 ### Unsupported targets
 
-To run on Linux ARM64, macOS x86-64 or musl, build the crate for that target on such a host
+To run on Linux with glibc, Linux ARM64 or macOS x86-64, build the crate for that target on such a host
 and point the JVM at the result:
 
 ```bash

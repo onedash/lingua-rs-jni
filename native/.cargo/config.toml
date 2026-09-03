@@ -10,3 +10,8 @@ MACOSX_DEPLOYMENT_TARGET = "11.0"
 # without the Visual C++ Redistributable installed (Server Core and Nano Server images, for
 # example). Statically linking the CRT leaves KERNEL32 as the only import.
 rustflags = ["-Ctarget-feature=+crt-static"]
+
+[target.x86_64-unknown-linux-musl]
+# A JNI library is loaded into the existing musl JVM process, so it must be a dynamically
+# loadable shared object rather than the musl target's default static-CRT output.
+rustflags = ["-Ctarget-feature=-crt-static"]

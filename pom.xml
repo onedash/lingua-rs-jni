@@ -58,6 +58,8 @@
 
         <!-- Set to true to package natives that were built elsewhere (see the dist profile). -->
         <skipNativeBuild>false</skipNativeBuild>
+        <native.cargo.target.args></native.cargo.target.args>
+        <native.output.dir>release</native.output.dir>
         <!-- Extra cargo arguments, appended verbatim to `cargo build`. Passing lingua's
              no-default-features flag plus an explicit language feature list cuts the ~290 MB
              library down to the languages you actually need; see the README for the exact
@@ -155,15 +157,16 @@
                             <skip>${skipNativeBuild}</skip>
                             <target>
                                 <fail unless="native.resource.dir"
-                                      message="Supported build machines are Windows x86-64, Linux x86-64 and macOS ARM64. Use -DskipNativeBuild=true to package libraries built elsewhere."/>
+                                      message="Supported build machines are Windows x86-64, Alpine Linux x86-64 and macOS ARM64. Use -DskipNativeBuild=true to package libraries built elsewhere."/>
                                 <exec executable="cargo" dir="${project.basedir}/native" failonerror="true">
                                     <arg value="build"/>
                                     <arg value="--release"/>
                                     <arg value="--locked"/>
+                                    <arg line="${native.cargo.target.args}"/>
                                     <arg line="${native.cargo.args}"/>
                                 </exec>
                                 <mkdir dir="${project.build.directory}/generated-resources/native/${native.resource.dir}"/>
-                                <copy file="${project.basedir}/native/target/release/${native.library.name}"
+                                <copy file="${project.basedir}/native/target/${native.output.dir}/${native.library.name}"
                                       tofile="${project.build.directory}/generated-resources/native/${native.resource.dir}/${native.library.name}"/>
                             </target>
                         </configuration>
@@ -201,11 +204,13 @@
             </properties>
         </profile>
         <profile>
-            <id>linux-x86-64</id>
+            <id>linux-x86-64-musl</id>
             <activation><os><family>unix</family><name>Linux</name><arch>amd64</arch></os></activation>
             <properties>
-                <native.resource.dir>linux-x86_64</native.resource.dir>
+                <native.resource.dir>linux-x86_64-musl</native.resource.dir>
                 <native.library.name>liblingua_rs_jni.so</native.library.name>
+                <native.cargo.target.args>--target x86_64-unknown-linux-musl</native.cargo.target.args>
+                <native.output.dir>x86_64-unknown-linux-musl/release</native.output.dir>
             </properties>
         </profile>
         <profile>
@@ -253,7 +258,7 @@
                                             </sequential>
                                         </macrodef>
                                         <require-native path="native/windows-x86_64/lingua_rs_jni.dll"/>
-                                        <require-native path="native/linux-x86_64/liblingua_rs_jni.so"/>
+                                        <require-native path="native/linux-x86_64-musl/liblingua_rs_jni.so"/>
                                         <require-native path="native/macos-aarch64/liblingua_rs_jni.dylib"/>
                                     </target>
                                 </configuration>
@@ -271,17 +276,17 @@
                                 <configuration>
                                     <classifier>windows-x86_64</classifier>
                                     <excludes>
-                                        <exclude>native/linux-x86_64/**</exclude>
+                                        <exclude>native/linux-x86_64-musl/**</exclude>
                                         <exclude>native/macos-aarch64/**</exclude>
                                     </excludes>
                                 </configuration>
                             </execution>
                             <execution>
-                                <id>linux-x86_64-jar</id>
+                                <id>linux-x86_64-musl-jar</id>
                                 <phase>package</phase>
                                 <goals><goal>jar</goal></goals>
                                 <configuration>
-                                    <classifier>linux-x86_64</classifier>
+                                    <classifier>linux-x86_64-musl</classifier>
                                     <excludes>
                                         <exclude>native/windows-x86_64/**</exclude>
                                         <exclude>native/macos-aarch64/**</exclude>
@@ -296,7 +301,7 @@
                                     <classifier>macos-aarch64</classifier>
                                     <excludes>
                                         <exclude>native/windows-x86_64/**</exclude>
-                                        <exclude>native/linux-x86_64/**</exclude>
+                                        <exclude>native/linux-x86_64-musl/**</exclude>
                                     </excludes>
                                 </configuration>
                             </execution>

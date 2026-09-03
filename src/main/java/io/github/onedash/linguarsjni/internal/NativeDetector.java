@@ -35,9 +35,6 @@ public final class NativeDetector {
     /** @return one confidence per language, in the order given to {@link #create} */
     public static native double[] confidenceValues(long handle, String text);
 
-    /** @return the confidence for a single language, without allocating a result array */
-    public static native double confidenceOf(long handle, String text, int languageIndex);
-
     /** Releases the native detector. Idempotent; unknown handles are ignored. */
     public static native void destroy(long handle);
 }

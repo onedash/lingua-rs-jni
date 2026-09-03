@@ -18,12 +18,11 @@ use jni::objects::{JClass, JDoubleArray, JObjectArray, JString};
 use jni::sys::{jboolean, jdouble, jdoubleArray, jint, jlong};
 use jni::JNIEnv;
 use lingua::{Language, LanguageDetector, LanguageDetectorBuilder};
+use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
-
-use std::collections::HashMap;
 
 /// Multiplicative hasher for the sequential detector ids. See the module docs.
 #[derive(Default)]
@@ -51,8 +50,7 @@ type Registry = HashMap<i64, Arc<Detector>, BuildHasherDefault<IdHasher>>;
 
 struct Detector {
     inner: LanguageDetector,
-    /// Languages in exactly the order Java passed them to `create`.
-    languages: Vec<Language>,
+    language_count: usize,
     /// `position[language as usize]` is the index of that language in `languages`,
     /// or `u32::MAX` when the detector was not built with it.
     position: Vec<u32>,
@@ -60,20 +58,20 @@ struct Detector {
 
 impl Detector {
     fn new(languages: Vec<Language>, inner: LanguageDetector) -> Self {
-        let mut position = vec![u32::MAX; language_count()];
+        let mut position = vec![u32::MAX; Language::all().len()];
         for (index, language) in languages.iter().enumerate() {
             position[*language as usize] = index as u32;
         }
         Detector {
             inner,
-            languages,
+            language_count: languages.len(),
             position,
         }
     }
 
     /// Reorders lingua's confidence-sorted result into the creation order Java expects.
     fn confidences_in_creation_order(&self, text: String) -> Vec<f64> {
-        let mut values = vec![0.0_f64; self.languages.len()];
+        let mut values = vec![0.0_f64; self.language_count];
         for (language, confidence) in self.inner.compute_language_confidence_values(text) {
             let slot = self.position[language as usize];
             if slot != u32::MAX {
@@ -82,13 +80,6 @@ impl Detector {
         }
         values
     }
-}
-
-/// Number of `Language` variants compiled into this build. Smaller than 75 when the crate
-/// is built with an explicit subset of lingua's per-language cargo features.
-fn language_count() -> usize {
-    static COUNT: OnceLock<usize> = OnceLock::new();
-    *COUNT.get_or_init(|| Language::all().len())
 }
 
 fn registry() -> &'static RwLock<Registry> {
@@ -209,7 +200,7 @@ pub extern "system" fn Java_io_github_onedash_linguarsjni_internal_NativeDetecto
         }
 
         let mut languages: Vec<Language> = Vec::with_capacity(count as usize);
-        let mut seen = vec![false; language_count()];
+        let mut seen = vec![false; Language::all().len()];
         for index in 0..count {
             let element = env.get_object_array_element(&language_names, index)?;
             let name: String = env.get_string(&JString::from(element))?.into();
@@ -277,32 +268,6 @@ pub extern "system" fn Java_io_github_onedash_linguarsjni_internal_NativeDetecto
         let result: JDoubleArray = env.new_double_array(values.len() as i32)?;
         env.set_double_array_region(&result, 0, &values)?;
         Ok(result.into_raw())
-    })
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_github_onedash_linguarsjni_internal_NativeDetector_confidenceOf(
-    mut env: JNIEnv,
-    _class: JClass,
-    id: jlong,
-    text: JString,
-    language_index: jint,
-) -> jdouble {
-    with_error(&mut env, 0.0, |env| {
-        let text = read_text(env, &text)?;
-        let detector = get_detector(id)?;
-        let wanted = *detector
-            .languages
-            .get(language_index as usize)
-            .ok_or_else(|| {
-                Failure::argument(format!("language index out of range: {language_index}"))
-            })?;
-        Ok(detector
-            .inner
-            .compute_language_confidence_values(text)
-            .into_iter()
-            .find(|(language, _)| *language == wanted)
-            .map_or(0.0, |(_, confidence)| confidence))
     })
 }
 

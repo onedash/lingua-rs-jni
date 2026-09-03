@@ -15,8 +15,8 @@ class NativeLibraryLoaderTest {
     void supportsReleaseTargets() {
         assertThat(NativeLibraryLoader.platform("Windows 11", "amd64")).isEqualTo("windows-x86_64");
         assertThat(NativeLibraryLoader.platform("Windows Server 2022", "x86_64")).isEqualTo("windows-x86_64");
-        assertThat(NativeLibraryLoader.platform("Linux", "x86_64")).isEqualTo("linux-x86_64");
-        assertThat(NativeLibraryLoader.platform("Linux", "amd64")).isEqualTo("linux-x86_64");
+        assertThat(NativeLibraryLoader.platform("Linux", "x86_64")).isEqualTo("linux-x86_64-musl");
+        assertThat(NativeLibraryLoader.platform("Linux", "amd64")).isEqualTo("linux-x86_64-musl");
         assertThat(NativeLibraryLoader.platform("Mac OS X", "aarch64")).isEqualTo("macos-aarch64");
         assertThat(NativeLibraryLoader.platform("Darwin", "arm64")).isEqualTo("macos-aarch64");
     }

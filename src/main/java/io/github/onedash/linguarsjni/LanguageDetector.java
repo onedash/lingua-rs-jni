@@ -4,7 +4,6 @@ import io.github.onedash.linguarsjni.internal.NativeDetector;
 
 import java.lang.ref.Cleaner;
 import java.lang.ref.Reference;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -31,10 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class LanguageDetector implements AutoCloseable {
     private static final Cleaner CLEANER = Cleaner.create();
 
-    private final Language[] languages;
-    private final List<Language> languageView;
-    /** Position of each language in {@link #languages}, indexed by ordinal; -1 when absent. */
-    private final int[] indexByOrdinal;
+    private final List<Language> languages;
     private final State state;
     private final Cleaner.Cleanable cleanable;
 
@@ -44,22 +40,15 @@ public final class LanguageDetector implements AutoCloseable {
             boolean lowAccuracy,
             boolean preload
     ) {
-        this.languages = languages.toArray(Language[]::new);
-        this.languageView = List.of(this.languages);
-        this.indexByOrdinal = new int[Language.values().length];
-        Arrays.fill(this.indexByOrdinal, -1);
-        String[] names = new String[this.languages.length];
-        for (int index = 0; index < this.languages.length; index++) {
-            names[index] = this.languages[index].name();
-            this.indexByOrdinal[this.languages[index].ordinal()] = index;
-        }
+        this.languages = List.copyOf(languages);
+        String[] names = this.languages.stream().map(Language::name).toArray(String[]::new);
         this.state = new State(NativeDetector.create(names, minimumRelativeDistance, lowAccuracy, preload));
         this.cleanable = CLEANER.register(this, state);
     }
 
     /** The languages this detector chooses between, in the order used by the confidence map. */
     public List<Language> getLanguages() {
-        return languageView;
+        return languages;
     }
 
     /**
@@ -77,11 +66,11 @@ public final class LanguageDetector implements AutoCloseable {
             if (index < 0) {
                 return Language.UNKNOWN;
             }
-            if (index >= languages.length) {
+            if (index >= languages.size()) {
                 throw new IllegalStateException("Native detector returned language index " + index
-                        + " for a detector with " + languages.length + " languages");
+                        + " for a detector with " + languages.size() + " languages");
             }
-            return languages[index];
+            return languages.get(index);
         } finally {
             // `this` is unreachable from here on as far as the JIT is concerned, so without a
             // fence the Cleaner could destroy the native detector while the call above runs.
@@ -105,12 +94,12 @@ public final class LanguageDetector implements AutoCloseable {
             } finally {
                 Reference.reachabilityFence(this);
             }
-            if (values.length != languages.length) {
+            if (values.length != languages.size()) {
                 throw new IllegalStateException("Native confidence result has " + values.length
-                        + " entries but the detector has " + languages.length + " languages");
+                        + " entries but the detector has " + languages.size() + " languages");
             }
             for (int index = 0; index < values.length; index++) {
-                scores.put(languages[index], values[index]);
+                scores.put(languages.get(index), values[index]);
             }
         }
         SortedMap<Language, Double> sorted = new TreeMap<>(byDescendingConfidence(scores));
@@ -120,22 +109,11 @@ public final class LanguageDetector implements AutoCloseable {
 
     /**
      * @return the confidence for a single language, or {@code 0.0} when this detector was not
-     *         built with it. Cheaper than {@link #computeLanguageConfidenceValues(String)}:
-     *         no map and no boxing.
+     *         built with it
      */
     public double computeLanguageConfidence(String text, Language language) {
-        Objects.requireNonNull(text, "text");
         Objects.requireNonNull(language, "language");
-        int index = indexByOrdinal[language.ordinal()];
-        if (index < 0 || !hasLetters(text)) {
-            return 0.0;
-        }
-        long handle = state.handle();
-        try {
-            return NativeDetector.confidenceOf(handle, text, index);
-        } finally {
-            Reference.reachabilityFence(this);
-        }
+        return computeLanguageConfidenceValues(text).getOrDefault(language, 0.0);
     }
 
     /** Releases the native detector. Idempotent. */

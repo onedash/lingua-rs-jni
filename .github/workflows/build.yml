@@ -16,9 +16,6 @@ concurrency:
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 env:
-  # The released .so must load on any host with at least this glibc. Raising it silently would
-  # break older distributions, so the build asserts it instead.
-  MAX_GLIBC: '2.34'
   MACOS_MIN_VERSION: '11.0'
 
 jobs:
@@ -31,9 +28,6 @@ jobs:
           - runner: windows-latest
             platform: windows-x86_64
             library: lingua_rs_jni.dll
-          - runner: ubuntu-latest
-            platform: linux-x86_64
-            library: liblingua_rs_jni.so
           # macos-latest is always Apple silicon; the architecture is asserted below anyway.
           - runner: macos-latest
             platform: macos-aarch64
@@ -77,20 +71,6 @@ jobs:
           set -euo pipefail
           ls -l "$LIBRARY"
           case "${{ matrix.platform }}" in
-            linux-x86_64)
-              required=$(objdump -T "$LIBRARY" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' \
-                | sed 's/GLIBC_//' | sort -V -u)
-              echo "Required glibc symbol versions:"; echo "$required" | sed 's/^/  /'
-              highest=$(echo "$required" | tail -1)
-              if [ "$(printf '%s\n%s\n' "$highest" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
-                echo "::error::Needs glibc $highest but the supported floor is $MAX_GLIBC."
-                echo "::error::Build the Linux library in an older container, or raise MAX_GLIBC and say so in the README."
-                exit 1
-              fi
-              file "$LIBRARY" | grep -q 'x86-64' \
-                || { echo "::error::Not an x86-64 library"; exit 1; }
-              echo "OK: x86-64, highest requirement is glibc $highest"
-              ;;
             macos-aarch64)
               otool -l "$LIBRARY" | grep -A4 LC_BUILD_VERSION
               otool -l "$LIBRARY" | grep -q "minos $MACOS_MIN_VERSION" \
@@ -117,9 +97,27 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  linux-musl:
+    name: linux-x86_64-musl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Building and testing inside Alpine proves that the shared object loads in the same
+      # musl-based JVM family used by BackendMono.
+      - name: Build and test in Alpine
+        run: docker build --target native-artifact --output type=local,dest=target/generated-resources .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-x86_64-musl
+          path: target/generated-resources/native
+          retention-days: 1
+          if-no-files-found: error
+
   package:
     name: package
-    needs: native
+    needs: [native, linux-musl]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -148,17 +146,29 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: mvn -B -ntp versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DgenerateBackupPoms=false
 
-      # Runs the Java tests once more against the Linux library, then builds the universal JAR,
-      # the three per-platform JARs and the sources/javadoc JARs. On a tag it also publishes
-      # them to GitHub Packages.
+      # Every native library was already tested on its own OS. The packaging runner uses glibc,
+      # so it must not try to load the Alpine/musl library.
       - name: Package
+        run: mvn -B -ntp -Pdist -DskipTests package
+
+      - name: Enforce universal JAR size limit
         run: |
           set -euo pipefail
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            mvn -B -ntp -Pdist deploy
-          else
-            mvn -B -ntp -Pdist package
-          fi
+          universal=$(find target -maxdepth 1 -type f -name 'lingua-rs-jni-*.jar' \
+            ! -name '*-windows-x86_64.jar' \
+            ! -name '*-linux-x86_64-musl.jar' \
+            ! -name '*-macos-aarch64.jar' \
+            ! -name '*-sources.jar' \
+            ! -name '*-javadoc.jar' -print -quit)
+          [ -n "$universal" ] || { echo "::error::Universal JAR was not produced"; exit 1; }
+          size=$(wc -c < "$universal")
+          echo "Universal JAR: $universal ($size bytes)"
+          [ "$size" -lt 500000000 ] \
+            || { echo "::error::Universal JAR must be smaller than 500 MB"; exit 1; }
+
+      - name: Publish to GitHub Packages
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: mvn -B -ntp -Pdist -DskipTests deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -177,7 +187,7 @@ jobs:
             unzip -l "$jar" | grep -E 'native/.*(dll|so|dylib)$' || echo '   (no native libraries)'
           done
 
-      # Skipped on ordinary pushes: these JARs total roughly 800 MB.
+      # Skipped on ordinary pushes because the JARs are large.
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch'
         with:
